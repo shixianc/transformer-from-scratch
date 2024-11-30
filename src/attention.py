@@ -54,8 +54,9 @@ class Attention(nn.Module):
 
             Note2: main difference from inference-time forward():
             1. training forward (aka. Prefill) only once and Q shape (b, s, h) => Result shape (b, s, h) and each h vector represents an "attention" for each input token
-            2. inference forward num_new_tokens times and Q shape (b, 1, h) in both prefill and decoding phase (why prefill: we don't compute loss for each token, just the last token in order to generate a new token!)
+            2. inference forward num_new_tokens times and Q shape (b, s, h) in prefill and (b, 1, h) decoding phase (if turn on KV cache, otherwise still b,s,h)
             3. therefore training don't need KV cache, but inference need it.
+            4. both training and inference forward() requires causal mask - that's why it's called "Masked Self-Attention".
 
             Note2.1: why KV cache still works after layer2 ?:
             1. After prefill phase - each layer caches K, V vectors. It's easy to understand first layer KV cache can be reused because "original tokens did not change" (actual input words).
@@ -66,6 +67,14 @@ class Attention(nn.Module):
                 5. 2nd pass: now we need to encode "how", "are", "you", but as we explained in Note1&2 that "how" and "are" attention won't change at all because they don't attend to new tokens "you"
                 6. And when it pass thru MLP block tokens do not attend to each other(MLP is token independent and purely local to each token - just linear transformation along hidden dimension)
                 7. Therefore, hidden states will be exactly the same for "how are" part of the sequence between 1st & 2nd pass in 2nd layer, and hence can be *reused* -> hence idea of KV cache. And we just need to compute Q, K, V for new token in each pass.
+
+            Note2.2: how KV cache works?
+            1. w/o KV cache we'll have to process full sequence each pass across all layers so Q shape (b, s, h)
+            2. given observaction in Note2.1 we cache the KV vectors from last pass and reuse for next pass
+            3. next pass just need Q,K,V shape (b, 1, h) for new token, append to k,v cache vectors then do self-attention
+            4. last but not least, we don't need causal mask specifically because the new token can attend to all other tokens in sequence (because it's the newest token!)
+            
+            Takeaway: this is also why "Prefix Caching" works where KV cache can be further shared across sequences that share the same prefix, not just across passes!
 
             Note3: meaning of self-attention
             1. Q technically is always a single token (1, h) - we do (s, h) is just for parallel computing
